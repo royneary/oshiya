@@ -68,7 +68,7 @@ components:
 ```
 
 ##Pubsub service configuration
-The pubsub service is where the XMPP servers publish the push notification contents. It has the fulfill XEP-0357's requirements. Here is how ejabberd having mod_pubsub and mod_push installed can be configured:
+The pubsub service is where the XMPP servers publish the push notification contents. It has to fulfill XEP-0357's requirements. Here is how ejabberd having mod_pubsub and mod_push installed can be configured:
 ```yaml
 mod_pubsub:
   host : "pubsub.chatninja.org"
