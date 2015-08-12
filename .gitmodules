@@ -1,0 +1,12 @@
+[submodule "src/third_party/libstrophe"]
+	path = src/third_party/libstrophe
+	url = https://github.com/royneary/libstrophe.git
+[submodule "src/third_party/jsoncpp"]
+	path = src/third_party/jsoncpp
+	url = https://github.com/open-source-parsers/jsoncpp.git
+[submodule "src/third_party/yaml-cpp"]
+	path = src/third_party/yaml-cpp
+	url = https://github.com/blair1618/yaml-cpp.git
+[submodule "src/third_party/curlcpp"]
+	path = src/third_party/curlcpp
+	url = https://github.com/JosephP91/curlcpp.git

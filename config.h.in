@@ -1,0 +1,7 @@
+#ifndef CMAKE_CONFIG__H
+#define CMAKE_CONFIG__H
+
+#cmakedefine CONFIG_FILE "@CONFIG_FILE@"
+#cmakedefine STORAGE_DIR "@STORAGE_DIR@"
+
+#endif
