@@ -7,7 +7,7 @@ Oshiya is part of a GSoC 2015 project. Please send feedback.
 
 ##Features
 Oshiya will support these push services:
- * [APNS (Apple push notification service)](https://developer.apple.com/library/ios/documentation/NetworkingInternet/Conceptual/RemoteNotificationsPG/Chapters/ApplePushService.html)
+* [APNS (Apple push notification service)](https://developer.apple.com/library/ios/documentation/NetworkingInternet/Conceptual/RemoteNotificationsPG/Chapters/ApplePushService.html)
 * [GCM (Google cloud messaging)](https://developers.google.com/cloud-messaging)
 * [Mozilla SimplePush](https://wiki.mozilla.org/WebAPI/SimplePush)
 * [Ubuntu Push](https://developer.ubuntu.com/en/start/platform/guides/push-notifications-client-guide)
