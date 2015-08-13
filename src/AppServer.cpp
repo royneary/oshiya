@@ -477,13 +477,15 @@ void AppServer::deleteRegistrations(const Jid& user,
 {
     XData xdata {"result"};
 
-    std::vector<std::string> nodes
+    std::vector<NodeIdT> nodes
     {
         payload.getField("nodes", "list-multi").values
     };
 
     if(not nodes.empty())
     {
+        std::vector<NodeIdT> deletedNodes;
+
         for(auto it = nodes.begin(); it != nodes.end(); ++it)
         {
             bool deleted
@@ -495,15 +497,15 @@ void AppServer::deleteRegistrations(const Jid& user,
                 )
             };
             
-            if(not deleted)
+            if(deleted)
             {
-                nodes.erase(it);
+                deletedNodes.push_back(*it);
             }
         }
 
-        if(not nodes.empty())
+        if(not deletedNodes.empty())
         {
-            xdata.addField({"list-multi", "nodes", nodes});
+            xdata.addField({"list-multi", "nodes", deletedNodes});
         }
     }
 
@@ -688,6 +690,8 @@ std::unordered_map<AppServer::NodeIdT, Registration> AppServer::readRegs() const
         std::ifstream::in
     };
 
+    iFile.exceptions(std::ifstream::failbit | std::ifstream::badbit);
+
     if(not iFile.is_open())
     {
         // TODO: log info
@@ -702,15 +706,11 @@ std::unordered_map<AppServer::NodeIdT, Registration> AppServer::readRegs() const
             NodeIdT node;
             Registration reg;
 
-            std::getline(iFile, node);
-            // DEBUG:
-            std::cout << "DEBUG: read node: " << node << std::endl;
-            iFile >> reg;
-            
-            std::cout << "DEBUG: read reg, eofbit: " << iFile.eof() << std::endl;
-            
-            if(not iFile.eof())
+            try
             {
+                std::getline(iFile, node);
+                iFile >> reg;
+
                 // DEBUG:
                 std::cout << "DEBUG: read registration from storage:" << std::endl
                           << "user: " << reg.getUser().full() << std::endl
@@ -723,6 +723,19 @@ std::unordered_map<AppServer::NodeIdT, Registration> AppServer::readRegs() const
     
                 ret.emplace(node, reg);
             }
+
+            catch(const std::ios_base::failure&)
+            {
+                if(not iFile.eof())
+                {
+                    // TODO: log error
+                    std::cout << "ERROR: could not read storage file, "
+                                 "aborting reading registrations." << std::endl;
+
+                    return ret;
+                }
+            }
+
         }
 
         iFile.close();

@@ -23,6 +23,7 @@
 
 #include <ctime>
 #include <iostream>
+#include <limits>
 
 namespace Oshiya
 {
@@ -105,9 +106,9 @@ namespace Oshiya
             std::getline(is, token);
             std::getline(is, appId);
             is >> backendId;
-            is.ignore(1);
+            is.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
             is >> timestamp;
-            is.ignore(1);
+            is.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
 
             reg.setUser({user, server, resource});
             reg.setDeviceId(deviceId);
