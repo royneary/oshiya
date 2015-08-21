@@ -20,6 +20,10 @@
 #define OSHIYA_APNS_BACKEND__H
 
 #include "Backend.hpp"
+extern "C"
+{
+    #include "apn.h"
+}
 
 namespace Oshiya
 {
@@ -28,6 +32,8 @@ namespace Oshiya
         public:
         ///////
 
+        using PushNotification = Backend::PushNotification;
+
         ApnsBackend(const Jid& host,
                     const std::string& appName,
                     const std::string& certFile);
@@ -35,6 +41,16 @@ namespace Oshiya
         ~ApnsBackend() override;
 
         bool send(const PushNotification& notification) override;
+
+        private:
+        ////////
+
+        bool connectApns();
+
+        static std::string binaryToHex(const std::string& binaryToken);
+
+        apn_ctx_ref mApnCtx;
+        apn_error_ref mError;
     };
 }
 

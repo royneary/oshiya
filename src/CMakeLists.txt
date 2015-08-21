@@ -57,6 +57,14 @@ set(OSHIYA_INCLUDE_DIRS ${OSHIYA_INCLUDE_DIRS}
 )
 set(LIBS ${LIBS} curlcpp)
 
+# libcapn
+add_subdirectory(${THIRD_PARTY_DIR}/libcapn)
+set(OSHIYA_INCLUDE_DIRS ${OSHIYA_INCLUDE_DIRS}
+    ${THIRD_PARTY_DIR}/libcapn/src
+    ${PROJECT_BINARY_DIR}/src/third_party/libcapn/src
+)
+set(LIBS ${LIBS} capn)
+
 # pthread
 set(LIBS ${LIBS} pthread)
 

@@ -10,3 +10,6 @@
 [submodule "src/third_party/curlcpp"]
 	path = src/third_party/curlcpp
 	url = https://github.com/JosephP91/curlcpp.git
+[submodule "src/third_party/libcapn"]
+	path = src/third_party/libcapn
+	url = git://github.com/adobkin/libcapn
