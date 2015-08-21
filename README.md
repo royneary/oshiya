@@ -24,8 +24,7 @@ Currently only the GCM backend is usable. The Ubuntu backend is implemented but 
 ```bash
 git clone https://github.com/royneary/oshiya.git
 cd oshiya
-git submodule init
-git submodule update
+git submodule update --init --recursive
 mkdir build
 cd build
 # the config file path and the data storage location can be configured using cmake options
