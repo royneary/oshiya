@@ -162,7 +162,10 @@ void ApnsBackend::connectApns()
         mConnected = false;
     }
 
-    mConnected = true;
+    else
+    {
+        mConnected = true;
+    }
 }
 
 void ApnsBackend::disconnectApns()
