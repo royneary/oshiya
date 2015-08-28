@@ -20,6 +20,7 @@
 
 #include <sstream>
 #include <type_traits>
+#include <chrono>
 
 // DEBUG
 #include <iostream>
@@ -37,18 +38,14 @@ Backend::Backend(Type _type,
         certFile {_certFile},
         mWorkerThread {&Backend::doWork, this}
 {
-    //mWorkerThread = std::thread {&Backend::doWork, this};
+
 }
 
 Backend::~Backend()
 {
-    {
-        std::lock_guard<std::mutex> lk {mDispatchMutex};
+    mShutdown = true;
 
-        mShutdown = true;
-    }
-
-    mDispatchCv.notify_one();
+    mSendCv.notify_one();
 
     if(mWorkerThread.get_id() != std::thread::id {})
     {
@@ -92,7 +89,8 @@ std::string Backend::getTypeStr(Type type)
     return "";
 }
 
-void Backend::dispatch(const PayloadT& payload,
+void Backend::dispatch(std::size_t deviceHash,
+                       const PayloadT& payload,
                        const std::string& token,
                        const std::string& appId,
                        std::function<void()> unregisterCb)
@@ -100,59 +98,69 @@ void Backend::dispatch(const PayloadT& payload,
     {
         std::lock_guard<std::mutex> lk {mDispatchMutex};
 
-        mDispatchQueue.emplace(payload, token, appId, unregisterCb);
+        mDispatchQueue.remove_if(
+            [&deviceHash](const PushNotification& n)
+            {return n.deviceHash == deviceHash;}
+        );
+
+        mDispatchQueue.emplace(mDispatchQueue.end(),
+                               deviceHash,
+                               payload,
+                               token,
+                               appId,
+                               unregisterCb);
     }
 
     // DEBUG:
     std::cout << "Backend::dispatch: notifying worker" << std::endl;
 
-    mDispatchCv.notify_one(); 
+    mSendCv.notify_one(); 
 }
 
 void Backend::doWork()
 {
+    NotificationQueueT sendQueue;
+
     while(true)
     {
-        std::unique_lock<std::mutex> lk {mDispatchMutex};
-
-        if(not mDispatchQueue.empty())
         {
-            mDispatchCv.wait_for(
-                lk, 
-                std::chrono::milliseconds(Parameters::RetryPeriod)
-            );
-        }
+            std::unique_lock<std::mutex> lk {mSendMutex};
 
-        else
-        {
-            mDispatchCv.wait(lk);
+            if(not sendQueue.empty())
+            {
+                mSendCv.wait_for(
+                    lk,
+                    std::chrono::milliseconds(Parameters::RetryPeriod),
+                    [this]() {return mShutdown;}
+                );
+            }
+
+            else
+            {
+                mSendCv.wait(lk);
+            }
         }
 
         // DEBUG:
         std::cout << "DEBUG: worker woke up!" << std::endl;
 
+        {
+            std::lock_guard<std::mutex> lk {mDispatchMutex};
+
+            sendQueue.splice(sendQueue.end(), mDispatchQueue);
+        }
+
         if(mShutdown)
         {
+            // TODO:
+            // save sendQueue to disk
             return;
         }
 
-        bool sendSuccessful {true};
-
-        while(sendSuccessful and not mDispatchQueue.empty())
+        else
         {
-            sendSuccessful = send(mDispatchQueue.front());
-
-            if(sendSuccessful)
-            {
-                // DEBUG:
-                std::cout << "DEBUG: send successful!" << std::endl;
-                mDispatchQueue.pop();
-            }
-            else
-            {
-                // DEBUG:
-                std::cout << "DEBUG: send not successful!" << std::endl;
-            }
+            sendQueue = send(sendQueue);
         }
     }
 }
+

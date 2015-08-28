@@ -18,7 +18,9 @@
 
 #include "GcmBackend.hpp"
 
+#include "SmartPointerUtil.hpp"
 #include "curl_header.h"
+#include <cstring>
 
 using namespace Oshiya;
 
@@ -41,105 +43,224 @@ GcmBackend::~GcmBackend()
 
 }
 
-bool GcmBackend::send(const PushNotification& notification)
+Backend::NotificationQueueT GcmBackend::send(const NotificationQueueT& notifications)
 {
     // DEBUG:
     std::cout << "DEBUG: in GcmBackend::send" << std::endl;
 
-    Json::Value jsonNotification {Json::objectValue};
-    Json::Value data {Json::objectValue};
+    NotificationQueueT retryQueue;
 
-    for(const PayloadT::value_type& p : notification.payload)
+    for(auto it = notifications.cbegin(); it != notifications.cend(); ++it)
     {
-        data[p.first] = p.second;
-    }
+        const PushNotification& n {*it};
 
-    jsonNotification["to"] = notification.token;
-    jsonNotification["expiry_time"] = Parameters::NotificationExpireTime;
-    jsonNotification["data"] = data;
+        std::string payload {makePayload(n.token, n.payload)};
 
-    curl_header header;
-    header.add("Content-Type:application/json");
-    header.add("Authorization:key=" + mAuthKey);
-
-    mCurl.add(
-        curl_pair<CURLoption, curl_header>
-        {CURLOPT_HTTPHEADER, header}
-    );
-
-    mCurl.add(
-        curl_pair<CURLoption, std::string>
-        {CURLOPT_URL, "https://gcm-http.googleapis.com/gcm/send"}
-    );
-
-    mCurl.add(
-        curl_pair<CURLoption, std::string>
-        {CURLOPT_SSLCERT, certFile}
-    );
-
-    mCurl.add(
-        curl_pair<CURLoption, std::string>
-        {CURLOPT_SSLKEY, certFile}
-    );
-
-    mCurl.add(
-        curl_pair<CURLoption, bool>
-        {CURLOPT_SSL_VERIFYPEER, true}
-    );
-
-    mCurl.add(
-        curl_pair<CURLoption, std::string>
-        {CURLOPT_POSTFIELDS, mWriter.write(jsonNotification)}
-    );
-
-    // DEBUG:
-    std::cout << "DEBUG: sending notification with payload " << mWriter.write(jsonNotification) << std::endl;
-
-    bool responseOk {false};
-
-    try
-    {
-        // DEBUG:
-        std::cout << "before mCurl.perform()" << std::endl;
-
-        mCurl.perform();
-
-        // DEBUG:
-        std::cout << "after mCurl.perform()" << std::endl;
-        
-        std::unique_ptr<long> responseCode {mCurl.get_info<long>(CURLINFO_RESPONSE_CODE)};
-
-        responseOk =
-        responseCode.get() != nullptr and
-        (*responseCode == 200 or *responseCode == 400);
-
-        // DEBUG:
-        std::cout << "responseCode.get() == nullptr? " << (responseCode.get() == nullptr)
-                  << std::endl;
-        std::cout << "*responseCode =" << *responseCode << std::endl;
-
-        if(*responseCode == 400)
+        if(payload.size() > GcmParameters::MaxPayloadSize)
         {
-            notification.unregisterCb();     
+            payload = makePayload(n.token, {});
         }
 
-        // TODO: decode status line
+        std::string responseBody;
+    
+        curl_header header;
+        header.add("Content-Type:application/json");
+        header.add("Authorization:key=" + mAuthKey);
+
+        mCurl.add(
+            curl_pair<CURLoption, curl_header>
+            {CURLOPT_HTTPHEADER, header}
+        );
+
+        mCurl.add(
+            curl_pair<CURLoption, std::string>
+            {CURLOPT_URL, "https://gcm-http.googleapis.com/gcm/send"}
+        );
+
+        mCurl.add(
+            curl_pair<CURLoption, std::string>
+            {CURLOPT_SSLCERT, certFile}
+        );
+
+        mCurl.add(
+            curl_pair<CURLoption, std::string>
+            {CURLOPT_SSLKEY, certFile}
+        );
+
+        mCurl.add(
+            curl_pair<CURLoption, bool>
+            {CURLOPT_SSL_VERIFYPEER, true}
+        );
+
+        mCurl.add(
+            curl_pair<CURLoption, std::string>
+            {CURLOPT_POSTFIELDS, payload}
+        );
+
+        mCurl.add(
+            curl_pair<CURLoption, void*>
+            {CURLOPT_WRITEDATA, &responseBody}
+        );
+
+        mCurl.add(
+            curl_pair<CURLoption, decltype(&GcmBackend::bodyWriteCb)>
+            {CURLOPT_WRITEFUNCTION, bodyWriteCb}
+        );
+
+        try
+        {
+            mCurl.perform();
+            
+            std::unique_ptr<long> responseCode
+            {mCurl.get_info<long>(CURLINFO_RESPONSE_CODE)};
+
+            if(responseCode.get() == nullptr)
+            {
+                // connection error
+                retryQueue.insert(retryQueue.end(), it, notifications.cend());
+            }
+
+            else if(*responseCode == 200)
+            {
+                bool retry {processSuccessResponse(responseBody, n)};
+
+                if(retry)
+                {
+                    retryQueue.push_back(n);
+                }
+            }
+
+            else if(*responseCode >= 500 and *responseCode < 600)
+            {
+                // recoverable error
+                retryQueue.push_back(n);
+            }
+
+            else
+            {
+                // non-recoverable error
+                n.unregisterCb();
+            }
+        }
+
+        catch(curl_easy_exception error)
+        {
+            // DEBUG:
+            std::cout << "DEBUG: curl exception!" << std::endl;
+            error.print_traceback(); 
+
+            // connection error
+            retryQueue.insert(retryQueue.end(), it, notifications.cend());
+        }
+
+        mCurl.reset();
     }
 
-    catch(curl_easy_exception error)
+    return retryQueue;
+}
+
+std::size_t GcmBackend::bodyWriteCb(char* ptr,
+                                    std::size_t size,
+                                    std::size_t nmemb,
+                                    void* userdata)
+{
+    std::string& bodyStr = *static_cast<std::string*>(userdata);
+
+    std::size_t newDataLength {size * nmemb};
+    std::size_t existingLength {bodyStr.size()};
+
+    bodyStr.resize(existingLength + newDataLength);
+
+    memcpy(&bodyStr[existingLength], ptr, newDataLength);
+
+    return bodyStr.size();
+}
+
+bool GcmBackend::processSuccessResponse(const std::string& responseBody,
+                                   const PushNotification& notification)
+{
+    Json::Value root;
+    Json::Reader reader;
+
+    bool success {reader.parse(responseBody, root)};
+
+    if(not success)
     {
-        // DEBUG:
-        std::cout << "DEBUG: curl exception!" << std::endl;
-        error.print_traceback(); 
+        // invalid response, treating as non-recoverable error
+        notification.unregisterCb();
+        return false;
     }
 
-    // DEBUG:
-    std::cout << "DEBUG: before mCurl.reset()" << std::endl;
+    int failure {root.get("failure", -1).asInt()};
 
-    mCurl.reset();
+    if(failure == 0)
+    {
+        // success
+        return false;
+    }
 
-    // DEBUG:
-    std::cout << "DEBUG: after mCurl.reset()" << std::endl;
+    if(failure < 0)
+    {
+        // invalid response, treating as non-recoverable error
+        notification.unregisterCb();
+        return false;
+    }
 
-    return responseOk;
+    Json::Value results {root["results"]};
+
+    if(not results.isArray())
+    {
+        // invalid response, treating as non-recoverable error
+        notification.unregisterCb();
+        return false;
+    }
+
+    std::string error {results.get("error", "").asString()};
+
+    if(error == "Unavailable" or error == "InternalServerError")
+    {
+        // recoverable error, retry
+        return true;
+    }
+
+    // non-recoverable error
+    notification.unregisterCb();
+    return false;
+}
+
+std::string GcmBackend::makePayload(const std::string& token,
+                                    const PayloadT& payload)
+{
+    Json::Value jsonPayload {Json::objectValue};
+    Json::Value data {Json::objectValue};
+
+    for(const PayloadT::value_type& p : payload)
+    {
+        try
+        {
+            std::size_t convertedStrLength;
+            unsigned long converted {std::stoul(p.second, &convertedStrLength)};
+            
+            if(convertedStrLength == p.second.size() and converted <= UINT32_MAX)
+            {
+                data[p.first] = static_cast<uint32_t>(converted);
+            }
+
+            else
+            {
+                data[p.first] = p.second;
+            }
+        }
+
+        catch(const std::logic_error&)
+        {
+            data[p.first] = p.second;
+        }
+    }
+
+    jsonPayload["to"] = token;
+    jsonPayload["expiry_time"] = Parameters::NotificationExpireTime;
+    jsonPayload["data"] = data;
+
+    return mWriter.write(jsonPayload); 
 }

@@ -18,6 +18,7 @@
 
 #include "ApnsBackend.hpp"
 #include "Base64.hpp"
+#include "SmartPointerUtil.hpp"
 
 // DEBUG:
 #include <iostream>
@@ -58,72 +59,167 @@ ApnsBackend::~ApnsBackend()
     apn_free(&mApnCtx);
 }
 
-bool ApnsBackend::send(const PushNotification& notification)
+Backend::NotificationQueueT
+ApnsBackend::send(const NotificationQueueT& notifications)
 {
-    bool success {false};
-
     // DEBUG:
-    std::cout << "DEBUG: token = " << notification.token << std::endl;
+    std::cout << "ApnsBackend::send: notifications.size(): "
+              << notifications.size() << std::endl;
 
-    std::string binaryToken {Util::base64Decode(notification.token)};
-    std::string token {binaryToHex(binaryToken)};
-
-    std::cout << "DEBUG: decoded token length = " << token.size() << std::endl;
-    std::cout << "DEBUG: decoded token = " << token << std::endl;
-
-    apn_payload_ctx_ref payloadCtx = nullptr;
-    
-    if(apn_payload_init(&payloadCtx, &mError) == APN_ERROR)
+    if(not mConnected)
     {
-         // TODO: log error
-        std::cout << "ERROR: " << apn_error_message(mError) << std::endl;
-        apn_error_free(&mError);
-    }
-
-    if (apn_payload_add_token(payloadCtx, token.c_str(), &mError) == APN_ERROR)
-    {
-         // TODO: log error
-        std::cout << "ERROR: " << apn_error_message(mError) << std::endl;
-        apn_error_free(&mError);
-    }
-
-    apn_payload_set_content_available(payloadCtx, 1, nullptr);
-
-    if(apn_send(mApnCtx, payloadCtx, &mError) == APN_ERROR)
-    {
-        // TODO: log error
-        std::cout << "ERROR: " << apn_error_message(mError) << std::endl;
-        std::cout << "error code: " << APN_ERR_CODE_WITHOUT_CLASS(apn_error_code(mError))
-                  << std::endl;
-
-        apn_error_free(&mError);
-
         connectApns();
     }
 
-    else
+    NotificationQueueT retryQueue;
+
+    for(auto it = notifications.cbegin(); it != notifications.cend(); ++it)
     {
+        const PushNotification& n {*it};
         // DEBUG:
-        std::cout << "DEBUG: Success!" << std::endl;
-        success = true;
+        std::cout << "DEBUG: token = " << n.token << std::endl;
+
+        std::string binaryToken {Util::base64Decode(n.token)};
+        std::string token {binaryToHex(binaryToken)};
+
+        std::cout << "DEBUG: decoded token length = " << token.size() << std::endl;
+        std::cout << "DEBUG: decoded token = " << token << std::endl;
+
+        auto payloadCtxPtr = makePayload(token, n.payload);
+        apn_payload_ctx_ref payloadCtx {payloadCtxPtr.get()};
+        uint8_t result {apn_send(mApnCtx, payloadCtx, &mError)};
+       
+        // libcapn tells us about an invalid payload size, retry once with empty
+        // payload in that case
+        if(result == APN_ERROR and
+           apn_error_code(mError) == APN_ERR_INVALID_PAYLOAD_SIZE) 
+        {
+            payloadCtxPtr = makePayload(token, {});
+            apn_payload_ctx_ref fixedPayload {payloadCtxPtr.get()};
+            result = apn_send(mApnCtx, fixedPayload, &mError);
+        }
+
+        if(result == APN_ERROR)
+        {
+            int32_t errorCondition {apn_error_code(mError)};
+
+            switch(errorCondition)
+            {
+                case APN_ERR_SERVICE_SHUTDOWN:
+                {
+                    // DEBUG:
+                    std::cout << "DEBUG: service shutdown" << std::endl;
+                    // recoverable error
+                    retryQueue.push_back(n);
+                    break;
+                }
+
+                case APN_ERR_NOT_CONNECTED:
+                case APN_ERR_CONNECTION_CLOSED:
+                case APN_ERR_SSL_READ_FAILED:
+                case APN_ERR_SELECT:
+                {
+                    // DEBUG:
+                    std::cout << "DEBUG: connection error" << std::endl;
+                    // connection error
+                    disconnectApns();
+                    connectApns();
+                    retryQueue.insert(retryQueue.end(), it, notifications.cend());
+                    break;
+                }
+
+                default:
+                {
+                    // DEBUG:
+                    std::cout << "DEBUG: non-recoverable error" << std::endl;
+                    // non-recoverable error
+                    n.unregisterCb();
+                    break;
+                }
+            }
+
+            apn_error_free(&mError);
+        }
+
+        else
+        {
+            // DEBUG:
+            std::cout << "DEBUG: success!" << std::endl;
+            // success
+        }
     }
 
-    apn_payload_free(&payloadCtx);
-    
-    return success;
+    return retryQueue;
 }
 
-bool ApnsBackend::connectApns()
+void ApnsBackend::connectApns()
 {
     if(apn_connect(mApnCtx, &mError) == APN_ERROR)
     {
         std::cout << "ERROR: " << apn_error_message(mError) << std::endl;
         apn_error_free(&mError);
 
-        return false;
+        mConnected = false;
     }
 
-    return true;
+    mConnected = true;
+}
+
+void ApnsBackend::disconnectApns()
+{
+    apn_close(mApnCtx);
+    mConnected = false;
+}
+
+std::unique_ptr<__apn_payload, ApnsBackend::PayloadDeleterT>
+ApnsBackend::makePayload(const std::string& token, const PayloadT& payload)
+{
+    apn_payload_ctx_ref payloadCtx = nullptr;
+    
+    apn_payload_init(&payloadCtx, &mError);
+
+    apn_payload_add_token(payloadCtx, token.c_str(), &mError);
+
+    apn_payload_set_content_available(payloadCtx, 1, nullptr);
+
+    for(const PayloadT::value_type& p : payload)
+    {
+        try
+        {
+            std::size_t convertedStrLength;
+            unsigned long converted {std::stoul(p.second, &convertedStrLength)};
+            
+            if(convertedStrLength == p.second.size() and converted <= UINT32_MAX)
+            {
+                apn_payload_add_custom_property_integer(payloadCtx,
+                                                        p.first.c_str(),
+                                                        converted,
+                                                        nullptr);
+            }
+
+            else
+            {
+                apn_payload_add_custom_property_string(payloadCtx,
+                                                       p.first.c_str(),
+                                                       p.second.c_str(),
+                                                       nullptr);
+            }
+        }
+
+        catch(const std::logic_error&)
+        {
+            apn_payload_add_custom_property_string(payloadCtx,
+                                                   p.first.c_str(),
+                                                   p.second.c_str(),
+                                                   nullptr);
+        }
+    }
+
+    PayloadDeleterT payloadDeleter
+    {[](apn_payload_ctx_ref p) {apn_payload_free(&p);}};
+
+    return
+    {payloadCtx, payloadDeleter};
 }
 
 std::string ApnsBackend::binaryToHex(const std::string& binaryToken)
@@ -139,4 +235,3 @@ std::string ApnsBackend::binaryToHex(const std::string& binaryToken)
 
     return ss.str();
 }
-

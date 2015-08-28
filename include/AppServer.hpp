@@ -130,6 +130,8 @@ namespace Oshiya
 
         Backend::Type getRegType(const Registration& reg);
 
+        static std::size_t makeDeviceHash(const Jid& user, const std::string& deviceId);
+
         std::unordered_map<NodeIdT, Registration> readRegs() const;
         void writeRegs() const;
 

@@ -29,7 +29,12 @@ namespace Oshiya
     {
         public:
         ///////
-        
+       
+        struct GcmParameters
+        {
+            static const unsigned int MaxPayloadSize {4096};
+        };
+
         GcmBackend(const Jid& host,
                    const std::string& appName,
                    const std::string& certFile,
@@ -37,10 +42,20 @@ namespace Oshiya
 
         ~GcmBackend() override;
 
-        bool send(const PushNotification& notification) override;
-
         private:
         ////////
+
+        NotificationQueueT send(const NotificationQueueT& notification) override;
+
+        static std::size_t bodyWriteCb(char* ptr,
+                                       std::size_t size,
+                                       std::size_t nmemb,
+                                       void* userdata);
+
+        std::string makePayload(const std::string& token, const PayloadT& n);
+
+        bool processSuccessResponse(const std::string& responseBody,
+                                    const PushNotification& notification);
 
         std::string mAuthKey;
         Json::StyledWriter mWriter;

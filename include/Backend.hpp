@@ -22,7 +22,7 @@
 #include "Jid.hpp"
 
 #include <map>
-#include <queue>
+#include <list>
 #include <functional>
 #include <thread>
 #include <mutex>
@@ -60,17 +60,20 @@ namespace Oshiya
 
         struct PushNotification
         {
-            PushNotification(const PayloadT& _payload,
+            PushNotification(std::size_t _deviceHash,
+                             const PayloadT& _payload,
                              const std::string& _token,
                              const std::string& _appId,
                              const std::function<void()>& _unregisterCb)
                 :
+                    deviceHash {_deviceHash},
                     payload {_payload},
                     token {_token},
                     appId {_appId},
                     unregisterCb {_unregisterCb}
             { }
 
+            const std::size_t deviceHash;
             const PayloadT payload;
             const std::string token;
             const std::string appId;
@@ -100,22 +103,33 @@ namespace Oshiya
         static Type makeType(const std::string& typeStr);
         static std::string getTypeStr(Type type);
 
-        void dispatch(const PayloadT& payload,
+        void dispatch(std::size_t deviceHash,
+                      const PayloadT& payload,
                       const std::string& token,
                       const std::string& appId,
                       std::function<void()> unregisterCb);
 
         void doWork();
 
-        virtual bool send(const PushNotification& notification) = 0;
+        protected:
+        /////////
+
+        using NotificationQueueT = std::list<PushNotification>;
 
         private:
         ////////
 
-        bool mShutdown;
+        /**
+         * hand the dispatch queue to the backend implementation. The implementation
+         * can return a list of notifications for retrying.
+         */
+        virtual NotificationQueueT send(const NotificationQueueT& notifications) = 0;
+      
+        volatile bool mShutdown;
         std::mutex mDispatchMutex;
-        std::condition_variable mDispatchCv;
-        std::queue<PushNotification> mDispatchQueue;
+        std::mutex mSendMutex;
+        std::condition_variable mSendCv;
+        NotificationQueueT mDispatchQueue;
         std::thread mWorkerThread;
     };
 }

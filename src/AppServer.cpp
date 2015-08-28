@@ -304,6 +304,7 @@ void AppServer::pushNotificationReceived(const Jid& from,
     auto unregisterCb = [this, node, timestamp]() {deleteRegCb(node, timestamp);};
 
     mBackends.at(reg.getBackendId())->dispatch(
+        makeDeviceHash(reg.getUser(), reg.getDeviceId()),
         backendPayload,
         reg.getToken(),
         reg.getAppId(),
@@ -678,6 +679,13 @@ Backend::Type AppServer::getRegType(const Registration& reg)
     }
 
     return Backend::Type::Invalid;
+}
+
+std::size_t AppServer::makeDeviceHash(const Jid& user, const std::string& deviceId)
+{
+    std::string concat {user.bare() + deviceId};
+
+    return std::hash<std::string> {} (concat);
 }
 
 std::unordered_map<AppServer::NodeIdT, Registration> AppServer::readRegs() const

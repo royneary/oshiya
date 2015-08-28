@@ -30,18 +30,33 @@ namespace Oshiya
         public:
         ///////
 
+        struct UbuntuParameters
+        {
+            // just a wild guess
+            static const unsigned int MaxPayloadSize {4096};
+        };
+
         UbuntuBackend(const Jid& host,
                       const std::string& appName,
                       const std::string& certFile);
 
         ~UbuntuBackend() override;
 
-        bool send(const PushNotification& notification) override;
-
         std::string getIso8601Date(const std::chrono::system_clock::time_point& date);
 
         private:
         ////////
+
+        NotificationQueueT send(const NotificationQueueT& notifications) override;
+        
+        static std::size_t bodyWriteCb(char* ptr,
+                                       std::size_t size,
+                                       std::size_t nmemb,
+                                       void* userdata);
+
+        std::string makePayload(const std::string& appId,
+                                const std::string& token,
+                                const PayloadT& n);
 
         Json::StyledWriter mWriter;
         curl::curl_easy mCurl;

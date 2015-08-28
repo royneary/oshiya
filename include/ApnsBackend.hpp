@@ -40,15 +40,23 @@ namespace Oshiya
 
         ~ApnsBackend() override;
 
-        bool send(const PushNotification& notification) override;
-
         private:
         ////////
 
-        bool connectApns();
+        using PayloadDeleterT = void(*)(apn_payload_ctx_ref);
+        
+        NotificationQueueT send(const NotificationQueueT& notifications) override;
+        
+        void connectApns();
+
+        void disconnectApns();
+
+        std::unique_ptr<__apn_payload, PayloadDeleterT>
+        makePayload(const std::string& token, const PayloadT& payload);
 
         static std::string binaryToHex(const std::string& binaryToken);
 
+        bool mConnected;
         apn_ctx_ref mApnCtx;
         apn_error_ref mError;
     };

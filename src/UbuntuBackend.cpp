@@ -19,6 +19,7 @@
 #include "UbuntuBackend.hpp"
 
 #include "curl_header.h"
+#include <cstring>
 
 using namespace Oshiya;
 
@@ -39,17 +40,177 @@ UbuntuBackend::~UbuntuBackend()
 
 }
 
-bool UbuntuBackend::send(const PushNotification& notification)
+Backend::NotificationQueueT
+UbuntuBackend::send(const NotificationQueueT& notifications)
 {
-    // DEBUG:
     std::cout << "DEBUG: in UbuntuBackend::send" << std::endl;
 
-    Json::Value jsonNotification {Json::objectValue};
+    NotificationQueueT retryQueue;
+
+    for(auto it = notifications.cbegin(); it != notifications.cend(); ++it)
+    {
+        const PushNotification& n {*it}; 
+
+        std::string payload {makePayload(n.appId, n.token, n.payload)};
+
+        if(payload.size() > UbuntuParameters::MaxPayloadSize)
+        {
+            payload = makePayload(n.appId, n.token, {});
+        }
+
+        std::string responseBody;
+
+        curl_header header;
+        header.add("Content-Type:application/json");
+
+        mCurl.add(
+            curl_pair<CURLoption, curl_header>
+            {CURLOPT_HTTPHEADER, header}
+        );
+
+        mCurl.add(
+            curl_pair<CURLoption, std::string>
+            {CURLOPT_URL, "https://push.ubuntu.com/notify"}
+        );
+
+        mCurl.add(
+            curl_pair<CURLoption, std::string>
+            {CURLOPT_SSLCERT, certFile}
+        );
+
+        mCurl.add(
+            curl_pair<CURLoption, std::string>
+            {CURLOPT_SSLKEY, certFile}
+        );
+
+        mCurl.add(
+            curl_pair<CURLoption, bool>
+            {CURLOPT_SSL_VERIFYPEER, true}
+        );
+
+        mCurl.add(
+            curl_pair<CURLoption, std::string>
+            {CURLOPT_POSTFIELDS, payload}
+        );
+
+        mCurl.add(
+            curl_pair<CURLoption, void*>
+            {CURLOPT_WRITEDATA, &responseBody}
+        );
+
+        mCurl.add(
+            curl_pair<CURLoption, decltype(&UbuntuBackend::bodyWriteCb)>
+            {CURLOPT_WRITEFUNCTION, bodyWriteCb}
+        );
+
+        try
+        {
+            mCurl.perform();
+
+            std::unique_ptr<long> responseCode
+            {mCurl.get_info<long>(CURLINFO_RESPONSE_CODE)};
+
+            /**
+             * Error conditions - extracted from
+             * http://bazaar.launchpad.net/~ubuntu-push-hackers/ubuntu-push/trunk/view/head:/server/api/handlers.go
+             *
+             * 411 - "invalid-request" - "A Content-Length must be provided"
+             * 400 - "invalid-request" - "Request body empty"
+             * 413 - "invalid-request" - "Request body too large"
+             * 415 - "invalid-request" - "Wrong content type, should be application/json"
+             * 405 - "invalid-request" - "Wrong request method, should be POST"
+             * 405 - "invalid-request" - "Wrong request method, should be GET"
+             * 400 - "invalid-request" - "Malformed JSON Object"
+             * 400 - "io-error" - "Could not read request body"
+             * 400 - "invalid-request" - "Missing id field"
+             * 400 - "invalid-request" - "Missing data field"
+             * 400 - "invalid-request" - "Data too large"
+             * 400 - "invalid-request" - "Invalid expiration date"
+             * 400 - "invalid-request" - "Past expiration date"
+             * 400 - "unknown-channel" - "Unknown channel"
+             * 400 - "unknown-token" - "Unknown token"
+             * 500 - "internal" - "Unknown error"
+             * 503 - "unavailable" - "Message store unavailable"
+             * 503 - "unavailable" - "Could not store n"
+             * 503 - "unavailable" - "Could not make token"
+             * 503 - "unavailable" - "Could not remove token"
+             * 503 - "unavailable" - "Could not resolve token"
+             * 401 - "unauthorized" - "Unauthorized"
+             * 413 - "too-many-pending" - "Too many pending ns for this application"
+             */
+
+            if(responseCode.get() == nullptr)
+            {
+                // connection error
+                retryQueue.insert(retryQueue.end(), it, notifications.cend());
+            }
+           
+            else if(*responseCode == 200)
+            {
+                // success
+            }
+
+            else if(*responseCode == 503)
+            {
+                // recoverable error
+                retryQueue.push_back(n);
+            }
+
+            else
+            {
+                // non-recoverable error
+                n.unregisterCb();
+            }
+        }
+
+        catch(curl_easy_exception error)
+        {
+            // DEBUG:
+            std::cout << "DEBUG: curl exception!" << std::endl;
+            error.print_traceback();
+
+            // connection error
+            retryQueue.insert(retryQueue.end(), it, notifications.cend());
+        }
+
+        // DEBUG:
+        std::cout << "DEBUG: before mCurl.reset()" << std::endl;
+
+        mCurl.reset();
+    }
+
+    return retryQueue;
+}
+
+std::string UbuntuBackend::makePayload(const std::string& appId,
+                                       const std::string& token,
+                                       const PayloadT& payload)
+{
+    Json::Value jsonPayload {Json::objectValue};
     Json::Value data {Json::objectValue};
 
-    for(const PayloadT::value_type& p : notification.payload)
+    for(const PayloadT::value_type& p : payload)
     {
-        data[p.first] = p.second;
+        try
+        {
+            std::size_t convertedStrLength;
+            unsigned long converted {std::stoul(p.second, &convertedStrLength)};
+            
+            if(convertedStrLength == p.second.size() and converted <= UINT32_MAX)
+            {
+                data[p.first] = static_cast<uint32_t>(converted);
+            }
+
+            else
+            {
+                data[p.first] = p.second;
+            }
+        }
+
+        catch(const std::logic_error&)
+        {
+            data[p.first] = p.second;
+        }
     }
 
     std::string expireOn
@@ -60,93 +221,13 @@ bool UbuntuBackend::send(const PushNotification& notification)
         )
     };
 
-    jsonNotification["appid"] = notification.appId;
-    jsonNotification["expire_on"] = expireOn;
-    jsonNotification["token"] = notification.token;
-    // FIXME: set clear_pending if "too-many-pending" received
-    jsonNotification["clear_pending"] = false;
-    jsonNotification["data"] = data;
+    jsonPayload["appid"] = appId;
+    jsonPayload["expire_on"] = expireOn;
+    jsonPayload["token"] = token;
+    jsonPayload["clear_pending"] = true;
+    jsonPayload["data"] = data;
 
-    curl_header header;
-    header.add("Content-Type:application/json");
-
-    mCurl.add(
-        curl_pair<CURLoption, curl_header>
-        {CURLOPT_HTTPHEADER, header}
-    );
-
-    mCurl.add(
-        curl_pair<CURLoption, std::string>
-        {CURLOPT_URL, "https://push.ubuntu.com/notify"}
-    );
-
-    mCurl.add(
-        curl_pair<CURLoption, std::string>
-        {CURLOPT_SSLCERT, certFile}
-    );
-
-    mCurl.add(
-        curl_pair<CURLoption, std::string>
-        {CURLOPT_SSLKEY, certFile}
-    );
-
-    mCurl.add(
-        curl_pair<CURLoption, bool>
-        {CURLOPT_SSL_VERIFYPEER, true}
-    );
-
-    mCurl.add(
-        curl_pair<CURLoption, std::string>
-        {CURLOPT_POSTFIELDS, mWriter.write(jsonNotification)}
-    );
-
-    bool responseOk {false};
-
-    try
-    {
-        // DEBUG:
-        std::cout << "before mCurl.perform()" << std::endl;
-
-        mCurl.perform();
-
-        // DEBUG:
-        std::cout << "after mCurl.perform()" << std::endl;
-        
-        std::unique_ptr<long> responseCode {mCurl.get_info<long>(CURLINFO_RESPONSE_CODE)};
-
-        responseOk =
-        responseCode.get() != nullptr and
-        (*responseCode == 200 or *responseCode == 400);
-
-        // DEBUG:
-        std::cout << "responseCode.get() == nullptr? " << (responseCode.get() == nullptr)
-                  << std::endl;
-        std::cout << "*responseCode =" << *responseCode << std::endl;
-
-        if(*responseCode == 400)
-        {
-            notification.unregisterCb();     
-        }
-
-        // TODO: decode status line
-    }
-
-    catch(curl_easy_exception error)
-    {
-        // DEBUG:
-        std::cout << "DEBUG: curl exception!" << std::endl;
-        error.print_traceback(); 
-    }
-
-    // DEBUG:
-    std::cout << "DEBUG: before mCurl.reset()" << std::endl;
-
-    mCurl.reset();
-
-    // DEBUG:
-    std::cout << "DEBUG: after mCurl.reset()" << std::endl;
-
-    return responseOk;
+    return mWriter.write(jsonPayload);
 }
 
 std::string UbuntuBackend::getIso8601Date(const std::chrono::system_clock::time_point& date)
@@ -157,4 +238,21 @@ std::string UbuntuBackend::getIso8601Date(const std::chrono::system_clock::time_
     std::strftime(buf, sizeof buf, "%FT%TZ", gmtime(&t));
 
     return buf;
+}
+
+std::size_t UbuntuBackend::bodyWriteCb(char* ptr,
+                                       std::size_t size,
+                                       std::size_t nmemb,
+                                       void* userdata)
+{
+    std::string& bodyStr = *static_cast<std::string*>(userdata);
+
+    std::size_t newDataLength {size * nmemb};
+    std::size_t existingLength {bodyStr.size()};
+
+    bodyStr.resize(existingLength + newDataLength);
+
+    memcpy(&bodyStr[existingLength], ptr, newDataLength);
+
+    return bodyStr.size();
 }
