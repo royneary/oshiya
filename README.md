@@ -13,7 +13,7 @@ Oshiya will support these push services:
 * [Ubuntu Push](https://developer.ubuntu.com/en/start/platform/guides/push-notifications-client-guide)
 * [WNS (Windows notification service)](https://msdn.microsoft.com/en-us//library/windows/apps/hh913756.aspx)
 
-Currently only the GCM backend is usable. The Ubuntu backend is implemented but untested.
+Currently only the GCM and APNS backends are usable. The Ubuntu backend is implemented but untested.
 
 ##Prerequisites
 * libcurl 7.28.0 or later
