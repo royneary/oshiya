@@ -35,7 +35,7 @@ GcmBackend::GcmBackend(const Jid& host,
                 certFile),
         mAuthKey {authKey}
 {
-
+    startWorker();
 }
 
 GcmBackend::~GcmBackend()

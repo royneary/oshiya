@@ -35,8 +35,7 @@ Backend::Backend(Type _type,
         type {_type},
         host {_host},
         appName {_appName},
-        certFile {_certFile},
-        mWorkerThread {&Backend::doWork, this}
+        certFile {_certFile}
 {
 
 }
@@ -51,6 +50,11 @@ Backend::~Backend()
     {
         mWorkerThread.join();
     }
+}
+
+void Backend::startWorker()
+{
+    mWorkerThread = std::thread {&Backend::doWork, this};
 }
 
 Backend::IdT Backend::getId()
@@ -120,19 +124,36 @@ void Backend::dispatch(std::size_t deviceHash,
 void Backend::doWork()
 {
     NotificationQueueT sendQueue;
+    NotificationQueueT retryQueue;
 
-    while(true)
+    // TODO:
+    // read sendQueue from disk
+
+    while(not mShutdown)
     {
+        retryQueue = send(sendQueue);
+
+        bool dispatchQueueEmpty;
+
+        {
+            std::lock_guard<std::mutex> lk {mDispatchMutex};
+
+            dispatchQueueEmpty = mDispatchQueue.empty();
+        }
+
+        if(dispatchQueueEmpty)
         {
             std::unique_lock<std::mutex> lk {mSendMutex};
 
-            if(not sendQueue.empty())
+            if(not retryQueue.empty())
             {
                 mSendCv.wait_for(
                     lk,
                     std::chrono::milliseconds(Parameters::RetryPeriod),
                     [this]() {return mShutdown;}
                 );
+
+                sendQueue.splice(sendQueue.end(), retryQueue);
             }
 
             else
@@ -149,18 +170,9 @@ void Backend::doWork()
 
             sendQueue.splice(sendQueue.end(), mDispatchQueue);
         }
-
-        if(mShutdown)
-        {
-            // TODO:
-            // save sendQueue to disk
-            return;
-        }
-
-        else
-        {
-            sendQueue = send(sendQueue);
-        }
     }
+
+    // TODO:
+    // save sendQueue to disk
 }
 

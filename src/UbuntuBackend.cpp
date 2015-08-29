@@ -32,7 +32,7 @@ UbuntuBackend::UbuntuBackend(const Jid& host,
                 appName,
                 certFile)
 {
-
+    startWorker();
 }
 
 UbuntuBackend::~UbuntuBackend()

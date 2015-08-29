@@ -116,6 +116,8 @@ namespace Oshiya
 
         using NotificationQueueT = std::list<PushNotification>;
 
+        void startWorker();
+
         private:
         ////////
 

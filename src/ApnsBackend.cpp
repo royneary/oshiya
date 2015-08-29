@@ -37,6 +37,7 @@ ApnsBackend::ApnsBackend(const Jid& host,
                 host,
                 appName,
                 certFile),
+        mConnected {false},
         mApnCtx {nullptr},
         mError {nullptr}
 {
@@ -51,6 +52,8 @@ ApnsBackend::ApnsBackend(const Jid& host,
     apn_set_mode(mApnCtx, APN_MODE_SANDBOX, nullptr);
 
     connectApns();
+
+    startWorker();
 }
 
 ApnsBackend::~ApnsBackend()
@@ -68,6 +71,7 @@ ApnsBackend::send(const NotificationQueueT& notifications)
 
     if(not mConnected)
     {
+        disconnectApns();
         connectApns();
     }
 
@@ -154,6 +158,8 @@ ApnsBackend::send(const NotificationQueueT& notifications)
 
 void ApnsBackend::connectApns()
 {
+    // DEBUG:
+    std::cout << "DEBUG: connecting to APNS" << std::endl;
     if(apn_connect(mApnCtx, &mError) == APN_ERROR)
     {
         std::cout << "ERROR: " << apn_error_message(mError) << std::endl;
@@ -166,10 +172,15 @@ void ApnsBackend::connectApns()
     {
         mConnected = true;
     }
+
+    // DEBUG:
+    std::cout << "returning from connectApns" << std::endl;
 }
 
 void ApnsBackend::disconnectApns()
 {
+    // DEBUG:
+    std::cout << "DEBUG: disconnecting APNS" << std::endl;
     apn_close(mApnCtx);
     mConnected = false;
 }
