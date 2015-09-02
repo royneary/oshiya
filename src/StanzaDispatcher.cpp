@@ -23,11 +23,6 @@
 
 using namespace Oshiya;
 
-void StanzaDispatcher::addHandler(InPacket::Type type, StanzaHandler handler)
-{
-    mDispatchMap[type] = handler;
-}
-
 void StanzaDispatcher::handleMessage(const XmlElement& message)
 {
     const auto& makeString = Util::makeString;
@@ -147,9 +142,9 @@ void StanzaDispatcher::handlePubsubEvent(const XmlElement& event,
                         XData parsedXData {Util::parseXData(XmlElement {xdata})};
 
                         dispatch(
-                            Type::PushNotification,
                             InStanza<Type::PushNotification>
                             {
+                                getStanzaHandler<Type::PushNotification>(),
                                 from,
                                 node,
                                 parsedXData
@@ -206,13 +201,10 @@ void StanzaDispatcher::handleIqSet(const XmlElement& iq,
                 }
             }
 
-            // DEBUG:
-            std::cout << "handleIq: dispatching AdhocCommand" << std::endl;
-
             dispatch(
-                Type::AdhocCommand,
                 InStanza<Type::AdhocCommand>
                 {
+                    getStanzaHandler<Type::AdhocCommand>(),
                     from,
                     id,
                     action,
@@ -241,9 +233,9 @@ void StanzaDispatcher::handleIqResult(const XmlElement&,
     std::cout << "handleIq: dispatching IqResult" << std::endl;
 
     dispatch(
-        Type::IqResult,
         InStanza<Type::IqResult>
         {
+            getStanzaHandler<Type::IqResult>(),
             from,
             id
         }
@@ -277,9 +269,9 @@ void StanzaDispatcher::handleIqError(const XmlElement& iq,
         }
 
         dispatch(
-            Type::IqError,
             InStanza<Type::IqError>
             {
+                getStanzaHandler<Type::IqError>(),
                 from,
                 id,
                 type,
@@ -311,16 +303,13 @@ void StanzaDispatcher::handleInvalidStanza(const XmlElement& iq,
                               appSpecificNs)
     };
 
-    dispatch(Type::Invalid, InStanza<Type::Invalid>{error});
+    dispatch(InStanza<Type::Invalid> {getStanzaHandler<Type::Invalid>(), error});
 }
 
-void StanzaDispatcher::dispatch(InPacket::Type type,
-                                const InPacket& packet)
+void StanzaDispatcher::dispatch(const InPacket& packet)
 {
-    DispatchMap::const_iterator result {mDispatchMap.find(type)};
-    
-    if(result != mDispatchMap.cend())
+    if(packet.hasHandler())
     {
-        result->second(packet);
+        packet.callHandler();
     }
 }

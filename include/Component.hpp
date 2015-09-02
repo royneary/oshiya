@@ -136,12 +136,7 @@ namespace Oshiya
 
         void run();
 
-        // internal unpacking functions
-        void _commandReceived(const InPacket& packet);
-        void _iqResultReceived(const InPacket& packet);
-        void _iqErrorReceived(const InPacket& packet);
-        void _pushNotificationReceived(const InPacket& packet);
-        void _invalidStanzaReceived(const InPacket& packet);
+        void invalidStanzaReceived(const XmlElement& packet);
 
         // strophe callbacks
         static int handleIq(xmpp_conn_t* const conn,

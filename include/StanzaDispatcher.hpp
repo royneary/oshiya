@@ -36,6 +36,9 @@ extern "C"
 #include <type_traits>
 #include <unordered_map>
 
+// DEBUG:
+#include <iostream>
+
 namespace Oshiya
 {
     class StanzaDispatcher
@@ -43,9 +46,11 @@ namespace Oshiya
         public:
         ///////
 
-        using StanzaHandler = std::function<void(const InPacket&)>;
-
-        void addHandler(InPacket::Type, StanzaHandler handler);
+        template <InPacket::Type T>
+        void addStanzaHandler(typename InStanza<T>::FuncT handler)
+        {
+            mDispatchMap[T] = make_unique<InStanzaHandler<T>>(handler);
+        }
 
         void handleMessage(const XmlElement& message);
 
@@ -73,7 +78,9 @@ namespace Oshiya
         >::type;
 
         using DispatchMap =
-        std::unordered_map<InPacket::Type, StanzaHandler, HashType<InPacket::Type>>;
+        std::unordered_map<InPacket::Type,
+                           std::unique_ptr<InPacketHandler>,
+                           HashType<InPacket::Type>>;
 
         void handlePubsubEvent(const XmlElement& event,
                                const Jid& from);
@@ -97,7 +104,23 @@ namespace Oshiya
                                  const std::string& appSpecificCondition = "",
                                  const std::string& appSpecificNs = "");
 
-        void dispatch(InPacket::Type type, const InPacket& packet);
+        template <InPacket::Type T>
+        typename InStanzaHandler<T>::FuncT getStanzaHandler()
+        {
+            DispatchMap::const_iterator result {mDispatchMap.find(T)};
+
+            if(result != mDispatchMap.cend())
+            {
+                const InStanzaHandler<T>* handler
+                {static_cast<const InStanzaHandler<T>*>((result->second).get())};
+
+                return handler->func;
+            }
+
+            return {};
+        }
+
+        void dispatch(const InPacket& packet);
 
         DispatchMap mDispatchMap;
     };

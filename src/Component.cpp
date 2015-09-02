@@ -40,9 +40,6 @@ Component::Component(const Config& config)
         mStanzaDispatcher { },
         mShutdown {false}
 {
-    using Type = InPacket::Type;
-    using namespace std::placeholders;
-
     xmpp_initialize();
 
     const char* jid {mJid.full().c_str()};
@@ -55,16 +52,24 @@ Component::Component(const Config& config)
     xmpp_conn_set_jid(mConnection, jid);
     xmpp_conn_set_pass(mConnection, password);
 
-    mStanzaDispatcher.addHandler(Type::AdhocCommand,
-                                 std::bind(&Component::_commandReceived, this, _1));
-    mStanzaDispatcher.addHandler(Type::IqResult,
-                                 std::bind(&Component::_iqResultReceived, this, _1));
-    mStanzaDispatcher.addHandler(Type::IqError,
-                                 std::bind(&Component::_iqErrorReceived, this, _1));
-    mStanzaDispatcher.addHandler(Type::PushNotification,
-                                 std::bind(&Component::_pushNotificationReceived, this, _1));
-    mStanzaDispatcher.addHandler(Type::Invalid,
-                                 std::bind(&Component::_invalidStanzaReceived, this, _1));
+    using Type = InPacket::Type;
+    using namespace std::placeholders;
+
+    mStanzaDispatcher.addStanzaHandler<Type::AdhocCommand>(
+        std::bind(&Component::commandReceived, this, _1, _2, _3, _4, _5)
+    );
+    mStanzaDispatcher.addStanzaHandler<Type::IqResult>(
+        std::bind(&Component::iqResultReceived, this, _1, _2)
+    );
+    mStanzaDispatcher.addStanzaHandler<Type::IqError>(
+        std::bind(&Component::iqErrorReceived, this, _1, _2, _3, _4)
+    );
+    mStanzaDispatcher.addStanzaHandler<Type::PushNotification>(
+        std::bind(&Component::pushNotificationReceived, this, _1, _2, _3)
+    );
+    mStanzaDispatcher.addStanzaHandler<Type::Invalid>(
+        std::bind(&Component::invalidStanzaReceived, this, _1)
+    );
 }
 
 Component::~Component()
@@ -302,41 +307,11 @@ void Component::sendCommandError(const Jid& to,
     );
 }
 
-void Component::_commandReceived(const InPacket& packet)
+void Component::invalidStanzaReceived(const XmlElement& error)
 {
-    const AdhocCommand& stanza = static_cast<const AdhocCommand&>(packet);
-
-    commandReceived(stanza.from, stanza.id, stanza.action, stanza.node, stanza.payload);
-}
-
-void Component::_iqResultReceived(const InPacket& packet)
-{
-    const IqResult& stanza = static_cast<const IqResult&>(packet);
-
-    iqResultReceived(stanza.from, stanza.id);
-}
-
-void Component::_iqErrorReceived(const InPacket& packet)
-{
-    const IqError& stanza = static_cast<const IqError&>(packet);
-
-    iqErrorReceived(stanza.from, stanza.id, stanza.errorType, stanza.errors);
-}
-
-void Component::_pushNotificationReceived(const InPacket& packet)
-{
-    const PushNotification& stanza = static_cast<const PushNotification&>(packet);
-
-    pushNotificationReceived(stanza.from, stanza.node, stanza.payload);
-}
-
-void Component::_invalidStanzaReceived(const InPacket& packet)
-{
-    const Invalid& stanza = static_cast<const Invalid&>(packet);
-
-    if(stanza.stanzaError.isValid())
+    if(error.isValid())
     {
-        xmpp_send(mConnection, stanza.stanzaError.getStanzaPtr());
+        xmpp_send(mConnection, error.getStanzaPtr());
     }
 }
 

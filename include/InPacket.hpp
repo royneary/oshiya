@@ -23,6 +23,8 @@
 #include "XData.hpp"
 #include "XmlElement.hpp"
 
+#include <functional>
+
 namespace Oshiya
 {
     struct InPacket
@@ -37,9 +39,15 @@ namespace Oshiya
         };
 
         virtual ~InPacket() = 0;
+
+        virtual bool hasHandler() const = 0;
+        virtual void callHandler() const = 0;
     };
 
     inline InPacket::~InPacket() { }
+
+    struct InPacketHandler
+    { };
 
     template <InPacket::Type>
     struct InStanza;
@@ -48,12 +56,21 @@ namespace Oshiya
     template <>
     struct InStanza<InPacket::Type::AdhocCommand> : public InPacket
     {
-        InStanza(const Jid& _from,
-               const std::string& _id,
-               const std::string& _action,
-               const std::string& _node,
-               const XData& _payload)
+        using FuncT =
+        std::function<void(const Jid&,
+                           const std::string&,
+                           const std::string&,
+                           const std::string&,
+                           const XData&)>;
+
+        InStanza(FuncT _handler,
+                 const Jid& _from,
+                 const std::string& _id,
+                 const std::string& _action,
+                 const std::string& _node,
+                 const XData& _payload)
             :
+                handler {_handler},
                 from {_from},
                 id {_id},
                 action {_action},
@@ -61,6 +78,10 @@ namespace Oshiya
                 payload {_payload}
         { }
 
+        bool hasHandler() const override {return handler != nullptr;}
+        void callHandler() const override {handler(from, id, action, node, payload);}
+
+        const FuncT handler;
         const Jid from;
         const std::string id;
         const std::string action;
@@ -72,13 +93,22 @@ namespace Oshiya
     template <>
     struct InStanza<InPacket::Type::IqResult> : public InPacket
     {
-        InStanza(const Jid& _from,
-               const std::string& _id)
+        using FuncT =
+        std::function<void(const Jid&, const std::string&)>;
+
+        InStanza(FuncT _handler,
+                 const Jid& _from,
+                 const std::string& _id)
             :
+                handler {_handler},
                 from {_from},
                 id {_id}
         { }
 
+        bool hasHandler() const override {return handler != nullptr;}
+        void callHandler() const override {handler(from, id);}
+
+        const FuncT handler;
         const Jid from;
         const std::string id;
     };
@@ -87,17 +117,29 @@ namespace Oshiya
     template <>
     struct InStanza<InPacket::Type::IqError> : public InPacket
     {
-        InStanza(const Jid& _from,
-               const std::string& _id,
-               const std::string& _errorType,
-               const std::vector<std::string>& _errors)
+        using FuncT =
+        std::function<void(const Jid&,
+                           const std::string&,
+                           const std::string&,
+                           const std::vector<std::string>&)>;
+
+        InStanza(FuncT _handler,
+                 const Jid& _from,
+                 const std::string& _id,
+                 const std::string& _errorType,
+                 const std::vector<std::string>& _errors)
             :
+                handler {_handler},
                 from {_from},
                 id {_id},
                 errorType {_errorType},
                 errors {_errors}
         { }
 
+        bool hasHandler() const {return handler != nullptr;}
+        void callHandler() const override {handler(from, id, errorType, errors);}
+
+        const FuncT handler;
         const Jid from;
         const std::string id;
         const std::string errorType;
@@ -108,15 +150,26 @@ namespace Oshiya
     template <>
     struct InStanza<InPacket::Type::PushNotification> : public InPacket
     {
-        InStanza(const Jid& _from,
-               const std::string& _node,
-               const XData& _payload)
+        using FuncT =
+        std::function<void(const Jid&,
+                           const std::string&,
+                           const XData&)>;
+
+        InStanza(FuncT _handler,
+                 const Jid& _from,
+                 const std::string& _node,
+                 const XData& _payload)
             :
+                handler {_handler},
                 from {_from},
                 node {_node},
                 payload {_payload}
         { }
-    
+
+        bool hasHandler() const override {return handler != nullptr;}
+        void callHandler() const override {handler(from, node, payload);}
+ 
+        const FuncT handler;
         const Jid from;
         const std::string node;
         const XData payload;
@@ -126,13 +179,33 @@ namespace Oshiya
     template <>
     struct InStanza<InPacket::Type::Invalid> : public InPacket
     {
-        InStanza(const XmlElement& _stanzaError)
+        using FuncT =
+        std::function<void(const XmlElement&)>;
+
+        InStanza(FuncT _handler,
+                 const XmlElement& _stanzaError)
             :
+                handler {_handler},
                 stanzaError {_stanzaError}
         { }
 
+        bool hasHandler() const override {return handler != nullptr;}
+        void callHandler() const override {handler(stanzaError);}
+ 
+        const FuncT handler;
         // a stanza error to be sent if stanzaError.isValid()
         const XmlElement stanzaError;
+    };
+
+    template <InPacket::Type T>
+    struct InStanzaHandler : public InPacketHandler
+    {
+        using FuncT = typename InStanza<T>::FuncT;
+
+        InStanzaHandler(FuncT _func) : func {_func}
+        { }
+
+        FuncT func;
     };
 }
 
