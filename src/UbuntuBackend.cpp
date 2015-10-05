@@ -173,9 +173,6 @@ UbuntuBackend::send(const NotificationQueueT& notifications)
             retryQueue.insert(retryQueue.end(), it, notifications.cend());
         }
 
-        // DEBUG:
-        std::cout << "DEBUG: before mCurl.reset()" << std::endl;
-
         mCurl.reset();
     }
 

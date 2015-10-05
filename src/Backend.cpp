@@ -133,6 +133,8 @@ void Backend::doWork()
     {
         retryQueue = send(sendQueue);
 
+        sendQueue.clear();
+
         bool dispatchQueueEmpty;
 
         {
